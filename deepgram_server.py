@@ -107,5 +107,27 @@ def websocket_endpoint(ws):
         # Run async function
         asyncio.run(stream_deepgram())
         
-    excep
+    except Exception as e:
+        print(f"Error: {e}")
+        import traceback
+        traceback.print_exc()
+    finally:
+        print("Client disconnected")
+
+if __name__ == '__main__':
+    print("=" * 60)
+    print("CAI DEEPGRAM BACKEND (Single Port)")
+    print("=" * 60)
+    
+    if DEEPGRAM_API_KEY:
+        print(f"API Key: {DEEPGRAM_API_KEY[:10]}...")
+    else:
+        print("WARNING: No API key!")
+    
+    print("=" * 60)
+    
+    port = int(os.environ.get('PORT', 5000))
+    print(f"Starting server on port {port}")
+    print("WebSocket endpoint: /ws")
+    app.run(host='0.0.0.0', port=port)
 
