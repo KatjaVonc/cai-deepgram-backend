@@ -1,1 +1,2 @@
-web: python deepgram_server.py
+web: gunicorn deepgram_server:app
+
