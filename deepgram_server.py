@@ -1,9 +1,10 @@
-from flask import Flask, request
+from flask import Flask
 from flask_cors import CORS
 from flask_sock import Sock
 import os
 import json
-import asyncio
+import threading
+import queue
 
 app = Flask(__name__)
 CORS(app)
@@ -16,20 +17,12 @@ def home():
     return {
         'status': 'ok',
         'name': 'CAI Deepgram Backend',
-        'api_key_configured': bool(DEEPGRAM_API_KEY),
-        'websocket': 'wss://cai-deepgram-backend.onrender.com/ws'
+        'api_key_configured': bool(DEEPGRAM_API_KEY)
     }
 
 @app.route('/health')
 def health():
     return {'status': 'healthy'}
-
-@app.route('/test')
-def test():
-    return {
-        'deepgram_key': DEEPGRAM_API_KEY[:10] + '...' if DEEPGRAM_API_KEY else 'NOT SET',
-        'environment': 'production'
-    }
 
 @sock.route('/ws')
 def websocket_endpoint(ws):
@@ -47,86 +40,110 @@ def websocket_endpoint(ws):
         # Send ready signal
         ws.send(json.dumps({'status': 'ready'}))
         
-        # Import websockets for Deepgram connection
-        import websockets
+        # Create queue for audio data
+        audio_queue = queue.Queue()
+        stop_flag = threading.Event()
         
-        # Build Deepgram URL
-        dg_url = (
-            f"wss://api.deepgram.com/v1/listen"
-            f"?model=nova-2"
-            f"&language={language}"
-            f"&smart_format=true"
-            f"&interim_results=true"
-            f"&utterance_end_ms=1000"
-            f"&encoding=linear16"
-            f"&sample_rate=16000"
-        )
-        
-        headers = {"Authorization": f"Token {DEEPGRAM_API_KEY}"}
-        
-        print("Connecting to Deepgram...", flush=True)
-        
-        # Create event loop for this thread
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
-        async def process_stream():
-            async with websockets.connect(dg_url, extra_headers=headers) as dg_ws:
-                print("Connected to Deepgram", flush=True)
-                
-                # Handle audio and transcription in parallel
-                async def forward_audio():
-                    while True:
-                        try:
-                            # Receive from browser
-                            msg = ws.receive(timeout=0.1)
-                            if msg:
-                                if isinstance(msg, str):
-                                    data = json.loads(msg)
-                                    if data.get('type') == 'close':
-                                        print("Close signal received", flush=True)
-                                        break
-                                elif isinstance(msg, bytes):
-                                    # Forward audio to Deepgram
-                                    await dg_ws.send(msg)
-                        except:
-                            await asyncio.sleep(0.01)
-                            continue
-                
-                async def forward_transcription():
-                    try:
-                        async for msg in dg_ws:
+        # Thread to receive audio from browser
+        def receive_audio():
+            while not stop_flag.is_set():
+                try:
+                    msg = ws.receive(timeout=0.1)
+                    if msg:
+                        if isinstance(msg, bytes):
+                            audio_queue.put(msg)
+                            print(".", end="", flush=True)  # Show activity
+                        elif isinstance(msg, str):
                             data = json.loads(msg)
-                            if 'channel' in data:
-                                text = data['channel']['alternatives'][0]['transcript']
-                                is_final = data.get('is_final', False)
-                                
-                                if text:
-                                    # Send to browser
-                                    ws.send(json.dumps({
-                                        'text': text,
-                                        'is_final': is_final
-                                    }))
-                                    print(f"{'[F]' if is_final else '[I]'} {text[:30]}...", flush=True)
-                    except Exception as e:
-                        print(f"Transcription error: {e}", flush=True)
-                
-                # Run both tasks
-                await asyncio.gather(
-                    forward_audio(),
-                    forward_transcription(),
-                    return_exceptions=True
-                )
+                            if data.get('type') == 'close':
+                                stop_flag.set()
+                                break
+                except:
+                    continue
         
-        # Run the async function
-        loop.run_until_complete(process_stream())
+        # Thread to forward to Deepgram and receive transcriptions
+        def process_deepgram():
+            import websockets
+            import asyncio
+            
+            async def stream():
+                dg_url = (
+                    f"wss://api.deepgram.com/v1/listen"
+                    f"?model=nova-2"
+                    f"&language={language}"
+                    f"&smart_format=true"
+                    f"&interim_results=true"
+                    f"&utterance_end_ms=1000"
+                    f"&encoding=linear16"
+                    f"&sample_rate=16000"
+                )
+                
+                headers = {"Authorization": f"Token {DEEPGRAM_API_KEY}"}
+                
+                print("Connecting to Deepgram...", flush=True)
+                
+                async with websockets.connect(dg_url, extra_headers=headers) as dg_ws:
+                    print("Connected to Deepgram", flush=True)
+                    
+                    # Send audio task
+                    async def send_audio():
+                        while not stop_flag.is_set():
+                            try:
+                                # Get audio from queue (non-blocking)
+                                audio_data = audio_queue.get(timeout=0.1)
+                                await dg_ws.send(audio_data)
+                            except queue.Empty:
+                                await asyncio.sleep(0.01)
+                            except Exception as e:
+                                print(f"Send error: {e}", flush=True)
+                                break
+                    
+                    # Receive transcription task
+                    async def receive_transcription():
+                        try:
+                            async for msg in dg_ws:
+                                data = json.loads(msg)
+                                if 'channel' in data:
+                                    text = data['channel']['alternatives'][0]['transcript']
+                                    is_final = data.get('is_final', False)
+                                    
+                                    if text:
+                                        ws.send(json.dumps({
+                                            'text': text,
+                                            'is_final': is_final
+                                        }))
+                                        print(f"\n{'[F]' if is_final else '[I]'} {text[:50]}...", flush=True)
+                        except Exception as e:
+                            print(f"Receive error: {e}", flush=True)
+                    
+                    # Run both tasks
+                    await asyncio.gather(
+                        send_audio(),
+                        receive_transcription(),
+                        return_exceptions=True
+                    )
+            
+            # Run async code
+            asyncio.run(stream())
+        
+        # Start threads
+        audio_thread = threading.Thread(target=receive_audio, daemon=True)
+        deepgram_thread = threading.Thread(target=process_deepgram, daemon=True)
+        
+        audio_thread.start()
+        deepgram_thread.start()
+        
+        # Wait for completion
+        deepgram_thread.join()
+        stop_flag.set()
+        audio_thread.join()
         
     except Exception as e:
         print(f"Error: {e}", flush=True)
         import traceback
         traceback.print_exc()
     finally:
-        print("Client disconnected", flush=True)
+        print("\nClient disconnected", flush=True)
 
 if __name__ == '__main__':
     print("=" * 60)
