@@ -1,16 +1,12 @@
 from flask import Flask
 from flask_cors import CORS
-from flask_socketio import SocketIO, emit
 import os
+import asyncio
 import json
 import threading
-import websockets
-import asyncio
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'secret!'
-CORS(app, resources={r"/*": {"origins": "*"}})
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
+CORS(app)
 
 DEEPGRAM_API_KEY = os.environ.get('DEEPGRAM_API_KEY', '')
 
@@ -19,79 +15,92 @@ def home():
     return {
         'status': 'ok',
         'name': 'CAI Deepgram Backend',
-        'api_key_configured': bool(DEEPGRAM_API_KEY)
+        'api_key_configured': bool(DEEPGRAM_API_KEY),
+        'websocket': 'wss://cai-deepgram-backend.onrender.com'
     }
 
 @app.route('/health')
 def health():
     return {'status': 'healthy'}
 
-@socketio.on('connect')
-def handle_connect():
-    print('Client connected:', flush=True)
+@app.route('/test')
+def test():
+    return {
+        'deepgram_key': DEEPGRAM_API_KEY[:10] + '...' if DEEPGRAM_API_KEY else 'NOT SET',
+        'environment': 'production'
+    }
 
-@socketio.on('disconnect')
-def handle_disconnect():
-    print('Client disconnected', flush=True)
-
-@socketio.on('start_stream')
-def handle_start_stream(data):
-    print(f'Starting stream with language: {data.get("language", "de")}', flush=True)
-    
-    language = data.get('language', 'de')
-    
-    # Start Deepgram connection in a thread
-    thread = threading.Thread(target=deepgram_stream, args=(language,))
-    thread.daemon = True
-    thread.start()
-    
-    emit('ready', {'status': 'ready'})
-
-def deepgram_stream(language):
-    """Connect to Deepgram and handle streaming"""
-    asyncio.run(stream_deepgram(language))
-
-async def stream_deepgram(language):
-    dg_url = (
-        f"wss://api.deepgram.com/v1/listen"
-        f"?model=nova-2"
-        f"&language={language}"
-        f"&smart_format=true"
-        f"&interim_results=true"
-        f"&utterance_end_ms=1000"
-        f"&encoding=linear16"
-        f"&sample_rate=16000"
-    )
-    
-    headers = {"Authorization": f"Token {DEEPGRAM_API_KEY}"}
+async def handle_websocket(websocket):
+    """Handle WebSocket connection for Deepgram streaming"""
+    print("Client connected")
     
     try:
-        async with websockets.connect(dg_url, extra_headers=headers) as dg_ws:
-            print("Connected to Deepgram", flush=True)
+        import websockets as ws_lib
+        
+        config_msg = await websocket.recv()
+        config = json.loads(config_msg)
+        language = config.get('language', 'de')
+        
+        print(f"Language: {language}")
+        
+        dg_url = (
+            f"wss://api.deepgram.com/v1/listen"
+            f"?model=nova-2"
+            f"&language={language}"
+            f"&smart_format=true"
+            f"&interim_results=true"
+            f"&utterance_end_ms=1000"
+            f"&encoding=linear16"
+            f"&sample_rate=16000"
+        )
+        
+        headers = {"Authorization": f"Token {DEEPGRAM_API_KEY}"}
+        
+        async with ws_lib.connect(dg_url, extra_headers=headers) as dg_ws:
+            print("Connected to Deepgram")
             
-            # Listen for transcriptions from Deepgram
-            async for message in dg_ws:
-                data = json.loads(message)
-                
-                if 'channel' in data:
-                    transcript = data['channel']['alternatives'][0]['transcript']
-                    is_final = data.get('is_final', False)
-                    
-                    if transcript:
-                        socketio.emit('transcription', {
-                            'text': transcript,
-                            'is_final': is_final
-                        })
-                        print(f"{'[F]' if is_final else '[I]'} {transcript[:30]}...", flush=True)
+            await websocket.send(json.dumps({'status': 'ready'}))
+            
+            async def forward_audio():
+                async for msg in websocket:
+                    if isinstance(msg, bytes):
+                        await dg_ws.send(msg)
+                    elif isinstance(msg, str):
+                        data = json.loads(msg)
+                        if data.get('type') == 'close':
+                            break
+            
+            async def forward_transcription():
+                async for msg in dg_ws:
+                    data = json.loads(msg)
+                    if 'channel' in data:
+                        text = data['channel']['alternatives'][0]['transcript']
+                        is_final = data.get('is_final', False)
                         
+                        if text:
+                            await websocket.send(json.dumps({
+                                'text': text,
+                                'is_final': is_final
+                            }))
+                            print(f"{'[F]' if is_final else '[I]'} {text[:30]}...")
+            
+            await asyncio.gather(forward_audio(), forward_transcription())
+        
     except Exception as e:
-        print(f"Deepgram error: {e}", flush=True)
-        socketio.emit('error', {'message': str(e)})
+        print(f"Error: {e}")
+    finally:
+        print("Client disconnected")
 
-@socketio.on('audio_data')
-def handle_audio(data):
-    """Receive audio from browser - not used with Deepgram direct connection"""
-    pass
+def run_websocket_server():
+    """Run WebSocket server on separate thread"""
+    async def start():
+        import websockets
+        port = int(os.environ.get('WS_PORT', 8765))
+        async with websockets.serve(handle_websocket, "0.0.0.0", port):
+            print(f"WebSocket server: port {port}")
+            await asyncio.Future()
+    
+    asyncio.run(start())
 
 if __name__ == '__main__':
     print("=" * 60)
@@ -105,18 +114,12 @@ if __name__ == '__main__':
     
     print("=" * 60)
     
+    ws_thread = threading.Thread(target=run_websocket_server, daemon=True)
+    ws_thread.start()
+    
+    import time
+    time.sleep(2)
+    
     port = int(os.environ.get('PORT', 5000))
-    socketio.run(app, host='0.0.0.0', port=port, allow_unsafe_werkzeug=True)
-
-
----
-
-## 📦 Update requirements.txt
-
-flask==3.0.0
-flask-cors==4.0.0
-flask-socketio==5.3.6
-python-socketio==5.11.1
-websockets==12.0
-eventlet==0.35.2
-
+    print(f"Starting Flask on port {port}")
+    app.run(host='0.0.0.0', port=port)
