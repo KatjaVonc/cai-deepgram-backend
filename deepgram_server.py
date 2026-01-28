@@ -1,13 +1,16 @@
-from flask import Flask, request
+from flask import Flask
 from flask_cors import CORS
-from flask_sock import Sock
+from flask_socketio import SocketIO, emit
 import os
 import json
+import threading
+import websockets
 import asyncio
 
 app = Flask(__name__)
-CORS(app)
-sock = Sock(app)
+app.config['SECRET_KEY'] = 'secret!'
+CORS(app, resources={r"/*": {"origins": "*"}})
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
 DEEPGRAM_API_KEY = os.environ.get('DEEPGRAM_API_KEY', '')
 
@@ -16,107 +19,83 @@ def home():
     return {
         'status': 'ok',
         'name': 'CAI Deepgram Backend',
-        'api_key_configured': bool(DEEPGRAM_API_KEY),
-        'websocket': 'wss://cai-deepgram-backend.onrender.com/ws'
+        'api_key_configured': bool(DEEPGRAM_API_KEY)
     }
 
 @app.route('/health')
 def health():
     return {'status': 'healthy'}
 
-@app.route('/test')
-def test():
-    return {
-        'deepgram_key': DEEPGRAM_API_KEY[:10] + '...' if DEEPGRAM_API_KEY else 'NOT SET',
-        'environment': 'production'
-    }
+@socketio.on('connect')
+def handle_connect():
+    print('Client connected:', flush=True)
 
-@sock.route('/ws')
-def websocket_endpoint(ws):
-    """WebSocket endpoint for Deepgram streaming"""
-    print("Client connected")
+@socketio.on('disconnect')
+def handle_disconnect():
+    print('Client disconnected', flush=True)
+
+@socketio.on('start_stream')
+def handle_start_stream(data):
+    print(f'Starting stream with language: {data.get("language", "de")}', flush=True)
+    
+    language = data.get('language', 'de')
+    
+    # Start Deepgram connection in a thread
+    thread = threading.Thread(target=deepgram_stream, args=(language,))
+    thread.daemon = True
+    thread.start()
+    
+    emit('ready', {'status': 'ready'})
+
+def deepgram_stream(language):
+    """Connect to Deepgram and handle streaming"""
+    asyncio.run(stream_deepgram(language))
+
+async def stream_deepgram(language):
+    dg_url = (
+        f"wss://api.deepgram.com/v1/listen"
+        f"?model=nova-2"
+        f"&language={language}"
+        f"&smart_format=true"
+        f"&interim_results=true"
+        f"&utterance_end_ms=1000"
+        f"&encoding=linear16"
+        f"&sample_rate=16000"
+    )
+    
+    headers = {"Authorization": f"Token {DEEPGRAM_API_KEY}"}
     
     try:
-        # Get configuration
-        config_msg = ws.receive()
-        config = json.loads(config_msg)
-        language = config.get('language', 'de')
-        
-        print(f"Language: {language}")
-        
-        # Import websockets for Deepgram connection
-        import websockets
-        
-        # Build Deepgram URL
-        dg_url = (
-            f"wss://api.deepgram.com/v1/listen"
-            f"?model=nova-2"
-            f"&language={language}"
-            f"&smart_format=true"
-            f"&interim_results=true"
-            f"&utterance_end_ms=1000"
-            f"&encoding=linear16"
-            f"&sample_rate=16000"
-        )
-        
-        headers = {"Authorization": f"Token {DEEPGRAM_API_KEY}"}
-        
-        # Use asyncio to handle Deepgram WebSocket
-        async def stream_deepgram():
-            async with websockets.connect(dg_url, extra_headers=headers) as dg_ws:
-                print("Connected to Deepgram")
+        async with websockets.connect(dg_url, extra_headers=headers) as dg_ws:
+            print("Connected to Deepgram", flush=True)
+            
+            # Listen for transcriptions from Deepgram
+            async for message in dg_ws:
+                data = json.loads(message)
                 
-                # Send ready signal
-                ws.send(json.dumps({'status': 'ready'}))
-                
-                # Forward audio to Deepgram
-                async def forward_audio():
-                    while True:
-                        try:
-                            msg = ws.receive(timeout=0.1)
-                            if msg:
-                                if isinstance(msg, str):
-                                    data = json.loads(msg)
-                                    if data.get('type') == 'close':
-                                        break
-                                else:
-                                    await dg_ws.send(msg)
-                        except:
-                            await asyncio.sleep(0.01)
-                
-                # Forward transcription from Deepgram
-                async def forward_transcription():
-                    async for msg in dg_ws:
-                        data = json.loads(msg)
-                        if 'channel' in data:
-                            text = data['channel']['alternatives'][0]['transcript']
-                            is_final = data.get('is_final', False)
-                            
-                            if text:
-                                ws.send(json.dumps({
-                                    'text': text,
-                                    'is_final': is_final
-                                }))
-                                print(f"{'[F]' if is_final else '[I]'} {text[:30]}...")
-                
-                await asyncio.gather(
-                    forward_audio(),
-                    forward_transcription()
-                )
-        
-        # Run async function
-        asyncio.run(stream_deepgram())
-        
+                if 'channel' in data:
+                    transcript = data['channel']['alternatives'][0]['transcript']
+                    is_final = data.get('is_final', False)
+                    
+                    if transcript:
+                        socketio.emit('transcription', {
+                            'text': transcript,
+                            'is_final': is_final
+                        })
+                        print(f"{'[F]' if is_final else '[I]'} {transcript[:30]}...", flush=True)
+                        
     except Exception as e:
-        print(f"Error: {e}")
-        import traceback
-        traceback.print_exc()
-    finally:
-        print("Client disconnected")
+        print(f"Deepgram error: {e}", flush=True)
+        socketio.emit('error', {'message': str(e)})
+
+@socketio.on('audio_data')
+def handle_audio(data):
+    """Receive audio from browser - not used with Deepgram direct connection"""
+    pass
 
 if __name__ == '__main__':
     print("=" * 60)
-    print("CAI DEEPGRAM BACKEND (Single Port)")
+    print("CAI DEEPGRAM BACKEND")
     print("=" * 60)
     
     if DEEPGRAM_API_KEY:
@@ -127,7 +106,16 @@ if __name__ == '__main__':
     print("=" * 60)
     
     port = int(os.environ.get('PORT', 5000))
-    print(f"Starting server on port {port}")
-    print("WebSocket endpoint: /ws")
-    app.run(host='0.0.0.0', port=port)
+    socketio.run(app, host='0.0.0.0', port=port, allow_unsafe_werkzeug=True)
+```
 
+---
+
+## 📦 Update requirements.txt
+```
+flask==3.0.0
+flask-cors==4.0.0
+flask-socketio==5.3.6
+python-socketio==5.11.1
+websockets==12.0
+eventlet==0.35.2
