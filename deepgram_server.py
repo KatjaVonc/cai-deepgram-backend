@@ -79,6 +79,7 @@ def websocket_endpoint(ws):
                     f"&encoding=linear16"
                     f"&sample_rate=16000"
                     f"&vad_events=true"
+                    f"&detect_entities=true"
                 )
                 
                 headers = {"Authorization": f"Token {DEEPGRAM_API_KEY}"}
@@ -184,3 +185,4 @@ if __name__ == '__main__':
     print(f"Starting server on port {port}")
     print("WebSocket endpoint: /ws")
     app.run(host='0.0.0.0', port=port)
+
