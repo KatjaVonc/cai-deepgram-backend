@@ -1,29 +1,110 @@
-from flask import Flask
+from flask import Flask, request, jsonify
 from flask_cors import CORS
 from flask_sock import Sock
 import os
 import json
 import threading
 import queue
+import requests  # ADD THIS IMPORT
 
 app = Flask(__name__)
 CORS(app)
 sock = Sock(app)
 
 DEEPGRAM_API_KEY = os.environ.get('DEEPGRAM_API_KEY', '')
+CLAUDE_API_KEY = os.environ.get('CLAUDE_API_KEY', '')  # ADD THIS
 
 @app.route('/')
 def home():
     return {
         'status': 'ok',
         'name': 'CAI Deepgram Backend',
-        'api_key_configured': bool(DEEPGRAM_API_KEY)
+        'api_key_configured': bool(DEEPGRAM_API_KEY),
+        'claude_api_key_configured': bool(CLAUDE_API_KEY)  # ADD THIS
     }
 
 @app.route('/health')
 def health():
     return {'status': 'healthy'}
 
+# ===================================
+# NEW NER ENDPOINT
+# ===================================
+@app.route('/ner', methods=['POST'])
+def extract_ner():
+    """Extract named entities using Claude API"""
+    try:
+        data = request.json
+        text = data.get('text', '')
+        target_language = data.get('target_language', 'en')
+        
+        if not text:
+            return jsonify({'error': 'No text provided'}), 400
+        
+        if not CLAUDE_API_KEY:
+            return jsonify({'error': 'Claude API key not configured'}), 500
+        
+        # Language name mapping
+        language_map = {
+            'de': 'German',
+            'en': 'English',
+            'it': 'Italian',
+            'ro': 'Romanian',
+            'sl': 'Slovenian',
+            'fr': 'French',
+            'es': 'Spanish'
+        }
+        target_lang_name = language_map.get(target_language, 'English')
+        
+        # Call Claude API
+        response = requests.post(
+            'https://api.anthropic.com/v1/messages',
+            headers={
+                'Content-Type': 'application/json',
+                'x-api-key': CLAUDE_API_KEY,
+                'anthropic-version': '2023-06-01'
+            },
+            json={
+                'model': 'claude-3-haiku-20240307',
+                'max_tokens': 1024,
+                'messages': [{
+                    'role': 'user',
+                    'content': f'Extract named entities from this text and provide translations to {target_lang_name}. Return ONLY a JSON array with NO additional text, in this exact format: [{{"text": "entity name", "type": "PERSON", "translation": "{target_lang_name} translation"}}]. Valid types are: PERSON, ORGANIZATION, LOCATION. For each entity, provide the appropriate translation or transliteration in {target_lang_name}. Text: "{text}"'
+                }]
+            },
+            timeout=10
+        )
+        
+        if response.status_code != 200:
+            print(f"Claude API error: {response.status_code}", flush=True)
+            print(f"Response: {response.text}", flush=True)
+            return jsonify({'error': f'Claude API error: {response.status_code}'}), response.status_code
+        
+        # Parse Claude response
+        claude_data = response.json()
+        content = claude_data['content'][0]['text'].strip()
+        
+        # Extract JSON from response
+        import re
+        json_match = re.search(r'\[[\s\S]*\]', content)
+        if not json_match:
+            print(f"No JSON found in response: {content}", flush=True)
+            return jsonify({'entities': []})
+        
+        entities = json.loads(json_match.group(0))
+        
+        print(f"Extracted {len(entities)} entities", flush=True)
+        return jsonify({'entities': entities})
+        
+    except Exception as e:
+        print(f"NER error: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+# ===================================
+# EXISTING WEBSOCKET CODE
+# ===================================
 @sock.route('/ws')
 def websocket_endpoint(ws):
     """WebSocket endpoint for Deepgram streaming"""
@@ -175,14 +256,19 @@ if __name__ == '__main__':
     print("=" * 60)
     
     if DEEPGRAM_API_KEY:
-        print(f"API Key: {DEEPGRAM_API_KEY[:10]}...")
+        print(f"Deepgram API Key: {DEEPGRAM_API_KEY[:10]}...")
     else:
-        print("WARNING: No API key!")
+        print("WARNING: No Deepgram API key!")
+    
+    if CLAUDE_API_KEY:
+        print(f"Claude API Key: {CLAUDE_API_KEY[:10]}...")
+    else:
+        print("WARNING: No Claude API key!")
     
     print("=" * 60)
     
     port = int(os.environ.get('PORT', 5000))
     print(f"Starting server on port {port}")
     print("WebSocket endpoint: /ws")
+    print("NER endpoint: /ner")
     app.run(host='0.0.0.0', port=port)
-
