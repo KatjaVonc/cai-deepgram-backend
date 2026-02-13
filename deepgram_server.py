@@ -56,7 +56,7 @@ def extract_ner():
         }
         target_lang_name = language_map.get(target_language, 'English')
         
-        # Call Claude API
+        # Call Claude API - ORIGINAL WORKING PROMPT
         response = requests.post(
             'https://api.anthropic.com/v1/messages',
             headers={
