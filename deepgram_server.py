@@ -65,11 +65,11 @@ def extract_ner():
                 'anthropic-version': '2023-06-01'
             },
             json={
-                'model': 'claude-3-haiku-20240307',
+                'model': 'claude-3-5-sonnet-20241022',  # Better model for German
                 'max_tokens': 1024,
                 'messages': [{
                     'role': 'user',
-                    'content': f'Extract named entities from this text and provide translations to {target_lang_name}. Return ONLY a JSON array with NO additional text, in this exact format: [{{"text": "entity name", "type": "PERSON", "translation": "{target_lang_name} translation"}}]. Valid types are: PERSON, ORGANIZATION, LOCATION. For each entity, provide the appropriate translation or transliteration in {target_lang_name}. Text: "{text}"'
+                    'content': f'Extract named entities (proper nouns only - specific people, places, organizations) from this German text. DO NOT extract common nouns, pronouns, or generic words. Return ONLY a JSON array: [{{"text": "entity", "type": "PERSON|ORGANIZATION|LOCATION", "translation": "{target_lang_name} translation"}}]. Text: "{text}"'
                 }]
             },
             timeout=10
