@@ -56,7 +56,9 @@ def extract_ner():
         }
         target_lang_name = language_map.get(target_language, 'English')
         
-        # Call Claude API - ORIGINAL WORKING PROMPT
+        # Call Claude API with Sonnet 3.5
+        print(f"Calling Claude NER for text: {text[:100]}...", flush=True)
+        
         response = requests.post(
             'https://api.anthropic.com/v1/messages',
             headers={
@@ -65,15 +67,17 @@ def extract_ner():
                 'anthropic-version': '2023-06-01'
             },
             json={
-                'model': 'claude-3-5-sonnet-20241022',  # Better model for German
+                'model': 'claude-3-5-sonnet-20241022',
                 'max_tokens': 1024,
                 'messages': [{
                     'role': 'user',
-                    'content': f'Extract named entities (proper nouns only - specific people, places, organizations) from this German text. DO NOT extract common nouns, pronouns, or generic words. Return ONLY a JSON array: [{{"text": "entity", "type": "PERSON|ORGANIZATION|LOCATION", "translation": "{target_lang_name} translation"}}]. Text: "{text}"'
+                    'content': f'Extract named entities from this text and provide translations to {target_lang_name}. Return ONLY a JSON array with NO additional text, in this exact format: [{{"text": "entity name", "type": "PERSON", "translation": "{target_lang_name} translation"}}]. Valid types are: PERSON, ORGANIZATION, LOCATION. For each entity, provide the appropriate translation or transliteration in {target_lang_name}. Text: "{text}"'
                 }]
             },
             timeout=10
         )
+        
+        print(f"Claude API response status: {response.status_code}", flush=True)
         
         if response.status_code != 200:
             print(f"Claude API error: {response.status_code}", flush=True)
@@ -82,7 +86,10 @@ def extract_ner():
         
         # Parse Claude response
         claude_data = response.json()
+        print(f"Claude API response content: {claude_data}", flush=True)
+        
         content = claude_data['content'][0]['text'].strip()
+        print(f"Extracted content: {content}", flush=True)
         
         # Extract JSON from response
         import re
@@ -93,7 +100,7 @@ def extract_ner():
         
         entities = json.loads(json_match.group(0))
         
-        print(f"Extracted {len(entities)} entities", flush=True)
+        print(f"Extracted {len(entities)} entities: {entities}", flush=True)
         return jsonify({'entities': entities})
         
     except Exception as e:
