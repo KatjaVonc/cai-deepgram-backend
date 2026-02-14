@@ -107,9 +107,6 @@ def extract_ner():
         entities = json.loads(json_match.group(0))
         
         # AGGRESSIVE FILTERING: Only keep entities that are likely proper nouns
-        # Multi-word names are almost always proper nouns
-        # Known countries/cities/organizations
-        # Exclude common German words
         
         filtered_entities = []
         
@@ -123,51 +120,85 @@ def extract_ner():
             # Organizations
             'europäische union', 'nato', 'un', 'eu', 'bundestag',
             # Regions
-            'osten', 'westen', 'alpen', 'bayern',
+            'osten', 'westen', 'alpen', 'bayern', 'osten europas',
             # Lakes
             'bodensee', 'neusiedlersee', 'genfer see'
         }
         
-        # Blacklist of common German words that should NEVER be entities
+        # Blacklist of common German words
         blacklist = {
             'jahr', 'jahre', 'jahren', 'zeit', 'zeiten', 'tag', 'tage', 'tagen',
             'welt', 'licht', 'wahrheit', 'krieg', 'frieden', 'leben', 'tod',
             'ich', 'du', 'er', 'sie', 'es', 'wir', 'ihr', 'ein', 'eine', 'der', 'die', 'das',
-            'und', 'oder', 'aber', 'den', 'dem', 'des'
+            'und', 'oder', 'aber', 'den', 'dem', 'des', 'heute', 'morgen', 'gestern'
         }
         
+        # Common phrase patterns to reject
+        reject_patterns = [
+            'an einem tag', 'wie heute', 'wie gestern', 'wie morgen',
+            'unserer', 'unser', 'meine', 'mein', 'dein', 'deine'
+        ]
+        
         for entity in entities:
-            entity_text = entity.get('text', '').lower().strip()
+            entity_text = entity.get('text', '').strip()
+            entity_lower = entity_text.lower()
+            
+            # Rule 0: ALWAYS keep if in whitelist (even if it matches other rules)
+            if entity_lower in known_entities:
+                filtered_entities.append(entity)
+                print(f"Kept (whitelist): {entity_text}", flush=True)
+                continue
             
             # Rule 1: Skip if in blacklist
-            if entity_text in blacklist:
+            if entity_lower in blacklist:
                 print(f"Filtered (blacklist): {entity_text}", flush=True)
                 continue
             
-            # Rule 2: Keep if in whitelist
-            if entity_text in known_entities:
-                filtered_entities.append(entity)
+            # Rule 2: Skip if contains reject patterns
+            should_reject = False
+            for pattern in reject_patterns:
+                if pattern in entity_lower:
+                    print(f"Filtered (phrase pattern): {entity_text}", flush=True)
+                    should_reject = True
+                    break
+            if should_reject:
                 continue
             
-            # Rule 3: Keep if multi-word (likely a full name or compound proper noun)
-            if ' ' in entity_text and len(entity_text.split()) >= 2:
+            # Rule 3: Keep if multi-word AND both words are capitalized (likely proper noun)
+            if ' ' in entity_text:
+                words = entity_text.split()
+                if len(words) >= 2:
+                    # Check if words look like proper nouns (capitalized, not articles)
+                    proper_looking = [w for w in words if w[0].isupper() and w.lower() not in {'der', 'die', 'das', 'den', 'dem', 'des', 'ein', 'eine', 'und', 'oder'}]
+                    if len(proper_looking) >= 2:
+                        filtered_entities.append(entity)
+                        print(f"Kept (multi-word proper): {entity_text}", flush=True)
+                        continue
+            
+            # Rule 4: Keep if ends in -see or -berg (lakes/mountains)
+            if entity_lower.endswith('see') or entity_lower.endswith('berg'):
                 filtered_entities.append(entity)
+                print(f"Kept (geographical): {entity_text}", flush=True)
                 continue
             
-            # Rule 4: Keep if it's a known pattern (ends in -see for lakes, etc)
-            if entity_text.endswith('see') or entity_text.endswith('berg'):
-                filtered_entities.append(entity)
-                continue
-            
-            # Rule 5: Skip single words that are too short (< 4 chars)
-            if len(entity_text) < 4:
+            # Rule 5: Skip single words under 4 chars
+            if ' ' not in entity_text and len(entity_text) < 4:
                 print(f"Filtered (too short): {entity_text}", flush=True)
                 continue
             
-            # Rule 6: If none of above, skip it (too risky)
+            # Rule 6: If single word, only keep if it looks very proper-noun-like
+            if ' ' not in entity_text:
+                # Must be capitalized and longish
+                if entity_text[0].isupper() and len(entity_text) >= 5:
+                    filtered_entities.append(entity)
+                    print(f"Kept (single proper): {entity_text}", flush=True)
+                    continue
+            
+            # Default: skip uncertain ones
             print(f"Filtered (uncertain): {entity_text}", flush=True)
         
-        print(f"Extracted {len(filtered_entities)} entities after filtering (from {len(entities)})", flush=True)
+        print(f"Final: {len(filtered_entities)} entities after filtering (from {len(entities)})", flush=True)
+        print(f"Kept entities: {[e['text'] for e in filtered_entities]}", flush=True)
         return jsonify({'entities': filtered_entities})
         
     except Exception as e:
