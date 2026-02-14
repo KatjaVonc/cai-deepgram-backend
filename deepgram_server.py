@@ -69,7 +69,19 @@ def extract_ner():
                 'max_tokens': 1024,
                 'messages': [{
                     'role': 'user',
-                    'content': f'Extract named entities from this text and provide translations to {target_lang_name}. Return ONLY a JSON array with NO additional text, in this exact format: [{{"text": "entity name", "type": "PERSON", "translation": "{target_lang_name} translation"}}]. Valid types are: PERSON, ORGANIZATION, LOCATION. For each entity, provide the appropriate translation or transliteration in {target_lang_name}. Text: "{text}"'
+                    'content': f'''You are extracting ONLY proper nouns from German text. 
+
+CRITICAL: In German, ALL nouns are capitalized. You must distinguish between:
+- PROPER NOUNS (names of specific people/places/organizations): Europa, USA, Berlin, Angela Merkel, NATO
+- COMMON NOUNS (generic capitalized words): Jahr, Zeit, Welt, Krieg, Wahrheit, Licht
+
+Extract ONLY proper nouns (specific named entities). Do NOT extract common nouns even if capitalized.
+
+Return ONLY a JSON array: [{{"text": "Europa", "type": "LOCATION", "translation": "Europe"}}]
+
+Valid types: PERSON (specific people), ORGANIZATION (specific institutions), LOCATION (specific places)
+
+Text: "{text}"'''
                 }]
             },
             timeout=10
