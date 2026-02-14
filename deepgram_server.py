@@ -28,7 +28,7 @@ def health():
     return {'status': 'healthy'}
 
 # ===================================
-# NER ENDPOINT - WORKING HAIKU VERSION
+# NER ENDPOINT - ORIGINAL WORKING VERSION
 # ===================================
 @app.route('/ner', methods=['POST'])
 def extract_ner():
@@ -56,11 +56,7 @@ def extract_ner():
         }
         target_lang_name = language_map.get(target_language, 'English')
         
-        # Get source language from frontend (if provided)
-        source_language = data.get('source_language', 'de')
-        source_lang_name = language_map.get(source_language, 'German')
-        
-        # Call Claude API - LANGUAGE-AGNOSTIC PROMPT
+        # Call Claude API - ORIGINAL WORKING PROMPT
         response = requests.post(
             'https://api.anthropic.com/v1/messages',
             headers={
@@ -73,18 +69,7 @@ def extract_ner():
                 'max_tokens': 1024,
                 'messages': [{
                     'role': 'user',
-                    'content': f'''Extract named entities from this {source_lang_name} text and translate to {target_lang_name}.
-
-Extract ONLY proper nouns:
-- PERSON: Names of specific people
-- LOCATION: Countries, cities, regions, landmarks
-- ORGANIZATION: Specific institutions, companies
-
-Do NOT extract common nouns or generic words.
-
-Return ONLY JSON: [{{"text": "entity", "type": "PERSON", "translation": "{target_lang_name} translation"}}]
-
-Text: "{text}"'''
+                    'content': f'Extract named entities from this text and provide translations to {target_lang_name}. Return ONLY a JSON array with NO additional text, in this exact format: [{{"text": "entity name", "type": "PERSON", "translation": "{target_lang_name} translation"}}]. Valid types are: PERSON, ORGANIZATION, LOCATION. For each entity, provide the appropriate translation or transliteration in {target_lang_name}. Text: "{text}"'
                 }]
             },
             timeout=10
