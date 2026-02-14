@@ -71,22 +71,16 @@ def extract_ner():
                 'max_tokens': 2048,
                 'messages': [{
                     'role': 'user',
-                    'content': f'''You are a named entity recognition expert. Extract ONLY proper nouns from this {source_lang_name} text.
+                    'content': f'''Extract named entities from this {source_lang_name} text and translate to {target_lang_name}.
 
-PROPER NOUNS are names of SPECIFIC entities:
-- Countries, cities, regions: Österreich, Wien, Europa, USA
-- Organizations, institutions: Europäische Union, NATO, Bundestag
-- People: Angela Merkel, Van der Bellen
-- Geographical features with names: Bodensee, Alpen
+Extract ONLY:
+- Specific people: Angela Merkel, Van der Bellen
+- Specific places: Österreich, Deutschland, Europa, USA, Wien, Bodensee
+- Specific organizations: Europäische Union, NATO, Bundestag
 
-COMMON NOUNS are generic words (do NOT extract):
-- Generic concepts: Jahr, Zeit, Welt, Krieg, Frieden, Wahrheit, Licht
-- Regular nouns: Allianzen, Drohnen, Herkunft, Staatsgrenze
-- Pronouns/articles: ich, wir, der, die, das, ein
+Do NOT extract generic nouns, even if capitalized in German.
 
-Critical: Distinguish meaning, not just capitalization. "Europa" (the continent) is a proper noun. "Welt" (world in general) is common.
-
-Return ONLY a JSON array with translations to {target_lang_name}: [{{"text": "entity", "type": "PERSON|ORGANIZATION|LOCATION", "translation": "{target_lang_name}"}}]
+Return JSON: [{{"text": "entity", "type": "PERSON|ORGANIZATION|LOCATION", "translation": "{target_lang_name} translation"}}]
 
 Text: "{text}"'''
                 }]
