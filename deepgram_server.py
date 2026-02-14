@@ -93,8 +93,39 @@ def extract_ner():
         
         entities = json.loads(json_match.group(0))
         
-        print(f"Extracted {len(entities)} entities", flush=True)
-        return jsonify({'entities': entities})
+        # FILTER OUT COMMON GERMAN WORDS
+        # German capitalizes ALL nouns, so we need aggressive filtering
+        german_common_words = {
+            # Articles, pronouns, conjunctions
+            'und', 'oder', 'aber', 'denn', 'ein', 'eine', 'einer', 'einem', 'einen', 'eines',
+            'der', 'die', 'das', 'den', 'dem', 'des', 'ich', 'du', 'er', 'sie', 'es', 'wir', 'ihr',
+            # Common nouns (not proper nouns)
+            'jahr', 'jahre', 'jahren', 'tag', 'tage', 'tagen', 'zeit', 'zeiten', 'welt', 'menschen',
+            'licht', 'wahrheit', 'krieg', 'frieden', 'leben', 'tod', 'herkunft', 'drohnen',
+            'allianz', 'allianzen', 'heute', 'morgen', 'gestern', 'nichts', 'alles', 'etwas',
+            # English common words
+            'and', 'or', 'but', 'the', 'a', 'an', 'in', 'on', 'at', 'to', 'for', 'of', 'with',
+            'i', 'you', 'he', 'she', 'it', 'we', 'they', 'this', 'that', 'these', 'those',
+            'year', 'day', 'time', 'world', 'light', 'truth', 'war', 'peace', 'life', 'death'
+        }
+        
+        filtered_entities = []
+        for entity in entities:
+            entity_text = entity.get('text', '').lower().strip()
+            
+            # Skip if: too short, in stop words, or is a number
+            if len(entity_text) < 4:
+                continue
+            if entity_text in german_common_words:
+                print(f"Filtered out common word: {entity_text}", flush=True)
+                continue
+            if entity_text.isdigit():
+                continue
+                
+            filtered_entities.append(entity)
+        
+        print(f"Extracted {len(filtered_entities)} entities (filtered from {len(entities)})", flush=True)
+        return jsonify({'entities': filtered_entities})
         
     except Exception as e:
         print(f"NER error: {e}", flush=True)
