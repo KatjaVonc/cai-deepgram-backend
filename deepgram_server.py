@@ -69,22 +69,36 @@ def extract_ner():
                 'max_tokens': 1024,
                 'messages': [{
                     'role': 'user',
-                    'content': f'''Extract ONLY proper nouns (named entities) from this German text.
+                    'content': f'''Extract ONLY proper nouns (named entities) from German text and translate to {target_lang_name}.
 
-CRITICAL: German capitalizes ALL nouns. Distinguish carefully:
+German capitalizes ALL nouns. Extract ONLY these specific types:
 
-PROPER NOUNS (extract these):
-- Specific places: Europa, USA, Österreich, Deutschland, Berlin, Bodensee, Neusiedlersee
-- Specific organizations: Europäische Union, NATO, Bundestag, UN
-- Specific people: Angela Merkel, Emmanuel Macron
+LOCATIONS:
+✓ Countries: Österreich, Deutschland, Europa, USA, Frankreich
+✓ Cities: Berlin, Wien, Paris, Brüssel, London
+✓ Lakes & bodies of water: Bodensee, Neusiedlersee, Genfer See
+✓ Regions: Osten, Westen, Alpen, Bayern
+✓ Landmarks: specific named places
 
-COMMON NOUNS (do NOT extract):
-- Generic words: Jahr, Zeit, Welt, Krieg, Frieden, Licht, Wahrheit, Tag
-- Generic concepts: Zusammenhalt, Sicherheit, Allianz, Drohnen
+ORGANIZATIONS:
+✓ Institutions: Europäische Union, NATO, UN, Bundestag, EU
 
-Return ONLY JSON array: [{{"text": "Europa", "type": "LOCATION", "translation": "{target_lang_name} translation"}}]
+PEOPLE:
+✓ Full names: Angela Merkel, Emmanuel Macron, Joe Biden
+✓ Historical figures: Napoleon, Goethe
+✓ Extract FULL NAME when present (first + last together)
+✓ Single surnames MAY be extracted if clearly a person reference
 
-Valid types: PERSON, ORGANIZATION, LOCATION
+DO NOT EXTRACT:
+✗ Common nouns: Jahr, Zeit, Welt, Krieg, Licht, Tag
+✗ Generic concepts: Zusammenhalt, Sicherheit, Wahrheit
+
+IMPORTANT: 
+- Lakes ending in "-see" are almost always proper nouns
+- Full names (2+ words for a person) are always proper nouns
+- Countries and cities are always proper nouns
+
+Return JSON: [{{"text": "Bodensee", "type": "LOCATION", "translation": "Lake Constance"}}]
 
 Text: "{text}"'''
                 }]
