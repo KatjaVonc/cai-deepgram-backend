@@ -56,7 +56,20 @@ def extract_ner():
         }
         target_lang_name = language_map.get(target_language, 'English')
         
-        # Call Claude API - ORIGINAL WORKING PROMPT
+        # Get source language from frontend (if provided)
+        source_language = data.get('source_language', 'de')
+        source_lang_name = language_map.get(source_language, 'German')
+        
+        # Build prompt - multilingual base + German-specific hints
+        base_prompt = f'Extract named entities from this {source_lang_name} text and provide translations to {target_lang_name}. Return ONLY a JSON array with NO additional text, in this exact format: [{{"text": "entity name", "type": "PERSON", "translation": "{target_lang_name} translation"}}]. Valid types are: PERSON, ORGANIZATION, LOCATION. For each entity, provide the appropriate translation or transliteration in {target_lang_name}.'
+        
+        # Add German-specific context when source is German
+        if source_language == 'de':
+            base_prompt += ' IMPORTANT: In German, ALL nouns are capitalized. Extract ONLY proper nouns (specific people, places, organizations like Österreich, Europa, USA, Angela Merkel, Europäische Union). Do NOT extract common nouns like Jahr, Zeit, Welt, Licht, Wahrheit, ich, wir, ein.'
+        
+        base_prompt += f' Text: "{text}"'
+        
+        # Call Claude API - HYBRID PROMPT
         response = requests.post(
             'https://api.anthropic.com/v1/messages',
             headers={
@@ -69,7 +82,7 @@ def extract_ner():
                 'max_tokens': 1024,
                 'messages': [{
                     'role': 'user',
-                    'content': f'Extract named entities from this text and provide translations to {target_lang_name}. Return ONLY a JSON array with NO additional text, in this exact format: [{{"text": "entity name", "type": "PERSON", "translation": "{target_lang_name} translation"}}]. Valid types are: PERSON, ORGANIZATION, LOCATION. For each entity, provide the appropriate translation or transliteration in {target_lang_name}. Text: "{text}"'
+                    'content': base_prompt
                 }]
             },
             timeout=10
