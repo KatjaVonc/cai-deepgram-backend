@@ -5,14 +5,14 @@ import os
 import json
 import threading
 import queue
-import requests  # ADD THIS IMPORT
+import requests
 
 app = Flask(__name__)
 CORS(app)
 sock = Sock(app)
 
 DEEPGRAM_API_KEY = os.environ.get('DEEPGRAM_API_KEY', '')
-CLAUDE_API_KEY = os.environ.get('CLAUDE_API_KEY', '')  # ADD THIS
+CLAUDE_API_KEY = os.environ.get('CLAUDE_API_KEY', '')
 
 @app.route('/')
 def home():
@@ -20,7 +20,7 @@ def home():
         'status': 'ok',
         'name': 'CAI Deepgram Backend',
         'api_key_configured': bool(DEEPGRAM_API_KEY),
-        'claude_api_key_configured': bool(CLAUDE_API_KEY)  # ADD THIS
+        'claude_api_key_configured': bool(CLAUDE_API_KEY)
     }
 
 @app.route('/health')
@@ -28,7 +28,7 @@ def health():
     return {'status': 'healthy'}
 
 # ===================================
-# NEW NER ENDPOINT
+# NER ENDPOINT - WORKING HAIKU VERSION
 # ===================================
 @app.route('/ner', methods=['POST'])
 def extract_ner():
@@ -56,9 +56,7 @@ def extract_ner():
         }
         target_lang_name = language_map.get(target_language, 'English')
         
-        # Call Claude API with Sonnet 3.5
-        print(f"Calling Claude NER for text: {text[:100]}...", flush=True)
-        
+        # Call Claude API - HAIKU (fast and cheap, was working!)
         response = requests.post(
             'https://api.anthropic.com/v1/messages',
             headers={
@@ -67,7 +65,7 @@ def extract_ner():
                 'anthropic-version': '2023-06-01'
             },
             json={
-                'model': 'claude-3-5-sonnet-20240620',  # Correct Sonnet model name
+                'model': 'claude-3-haiku-20240307',
                 'max_tokens': 1024,
                 'messages': [{
                     'role': 'user',
@@ -77,8 +75,6 @@ def extract_ner():
             timeout=10
         )
         
-        print(f"Claude API response status: {response.status_code}", flush=True)
-        
         if response.status_code != 200:
             print(f"Claude API error: {response.status_code}", flush=True)
             print(f"Response: {response.text}", flush=True)
@@ -86,10 +82,7 @@ def extract_ner():
         
         # Parse Claude response
         claude_data = response.json()
-        print(f"Claude API response content: {claude_data}", flush=True)
-        
         content = claude_data['content'][0]['text'].strip()
-        print(f"Extracted content: {content}", flush=True)
         
         # Extract JSON from response
         import re
@@ -100,7 +93,7 @@ def extract_ner():
         
         entities = json.loads(json_match.group(0))
         
-        print(f"Extracted {len(entities)} entities: {entities}", flush=True)
+        print(f"Extracted {len(entities)} entities", flush=True)
         return jsonify({'entities': entities})
         
     except Exception as e:
@@ -110,7 +103,7 @@ def extract_ner():
         return jsonify({'error': str(e)}), 500
 
 # ===================================
-# EXISTING WEBSOCKET CODE
+# WEBSOCKET CODE
 # ===================================
 @sock.route('/ws')
 def websocket_endpoint(ws):
@@ -142,7 +135,7 @@ def websocket_endpoint(ws):
                             try:
                                 audio_queue.put(msg, timeout=0.1)
                             except queue.Full:
-                                pass  # Drop frame if queue full
+                                pass
                         elif isinstance(msg, str):
                             data = json.loads(msg)
                             if data.get('type') == 'close':
@@ -178,7 +171,6 @@ def websocket_endpoint(ws):
                     async with websockets.connect(dg_url, extra_headers=headers, ping_interval=5, ping_timeout=10) as dg_ws:
                         print("Connected to Deepgram", flush=True)
                         
-                        # Send audio task
                         async def send_audio():
                             try:
                                 while not stop_flag.is_set():
@@ -190,14 +182,12 @@ def websocket_endpoint(ws):
                             except Exception as e:
                                 print(f"Send error: {e}", flush=True)
                         
-                        # Receive transcription task
                         async def receive_transcription():
                             try:
                                 async for msg in dg_ws:
                                     try:
                                         data = json.loads(msg)
                                         
-                                        # Handle different response formats
                                         if 'channel' in data:
                                             alternatives = data['channel'].get('alternatives', [])
                                             if alternatives and len(alternatives) > 0:
@@ -223,7 +213,6 @@ def websocket_endpoint(ws):
                                 import traceback
                                 traceback.print_exc()
                         
-                        # Run both tasks
                         await asyncio.gather(
                             send_audio(),
                             receive_transcription(),
@@ -235,7 +224,6 @@ def websocket_endpoint(ws):
                     import traceback
                     traceback.print_exc()
             
-            # Run async code
             asyncio.run(stream())
         
         # Start threads
@@ -245,7 +233,6 @@ def websocket_endpoint(ws):
         audio_thread.start()
         deepgram_thread.start()
         
-        # Wait for completion
         deepgram_thread.join()
         stop_flag.set()
         audio_thread.join(timeout=2)
