@@ -159,7 +159,7 @@ def websocket_endpoint(ws):
             async def stream():
                 dg_url = (
                     f"wss://api.deepgram.com/v1/listen"
-                    f"?model=nova-2"
+                    f"?model=nova-3"
                     f"&language={language}"
                     f"&smart_format=true"
                     f"&interim_results=true"
