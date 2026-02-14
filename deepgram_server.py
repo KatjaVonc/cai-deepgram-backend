@@ -56,7 +56,11 @@ def extract_ner():
         }
         target_lang_name = language_map.get(target_language, 'English')
         
-        # Call Claude API - HAIKU (fast and cheap, was working!)
+        # Get source language from frontend (if provided)
+        source_language = data.get('source_language', 'de')
+        source_lang_name = language_map.get(source_language, 'German')
+        
+        # Call Claude API - LANGUAGE-AGNOSTIC PROMPT
         response = requests.post(
             'https://api.anthropic.com/v1/messages',
             headers={
@@ -69,36 +73,16 @@ def extract_ner():
                 'max_tokens': 1024,
                 'messages': [{
                     'role': 'user',
-                    'content': f'''Extract ONLY proper nouns (named entities) from German text and translate to {target_lang_name}.
+                    'content': f'''Extract named entities from this {source_lang_name} text and translate to {target_lang_name}.
 
-German capitalizes ALL nouns. Extract ONLY these specific types:
+Extract ONLY proper nouns:
+- PERSON: Names of specific people
+- LOCATION: Countries, cities, regions, landmarks
+- ORGANIZATION: Specific institutions, companies
 
-LOCATIONS:
-✓ Countries: Österreich, Deutschland, Europa, USA, Frankreich
-✓ Cities: Berlin, Wien, Paris, Brüssel, London
-✓ Lakes & bodies of water: Bodensee, Neusiedlersee, Genfer See
-✓ Regions: Osten, Westen, Alpen, Bayern
-✓ Landmarks: specific named places
+Do NOT extract common nouns or generic words.
 
-ORGANIZATIONS:
-✓ Institutions: Europäische Union, NATO, UN, Bundestag, EU
-
-PEOPLE:
-✓ Full names: Angela Merkel, Emmanuel Macron, Joe Biden
-✓ Historical figures: Napoleon, Goethe
-✓ Extract FULL NAME when present (first + last together)
-✓ Single surnames MAY be extracted if clearly a person reference
-
-DO NOT EXTRACT:
-✗ Common nouns: Jahr, Zeit, Welt, Krieg, Licht, Tag
-✗ Generic concepts: Zusammenhalt, Sicherheit, Wahrheit
-
-IMPORTANT: 
-- Lakes ending in "-see" are almost always proper nouns
-- Full names (2+ words for a person) are always proper nouns
-- Countries and cities are always proper nouns
-
-Return JSON: [{{"text": "Bodensee", "type": "LOCATION", "translation": "Lake Constance"}}]
+Return ONLY JSON: [{{"text": "entity", "type": "PERSON", "translation": "{target_lang_name} translation"}}]
 
 Text: "{text}"'''
                 }]
