@@ -28,15 +28,16 @@ def health():
     return {'status': 'healthy'}
 
 # ===================================
-# NER ENDPOINT - ORIGINAL WORKING VERSION
+# NER ENDPOINT - SONNET 3.5 (SMARTER)
 # ===================================
 @app.route('/ner', methods=['POST'])
 def extract_ner():
-    """Extract named entities using Claude API"""
+    """Extract named entities using Claude API with Sonnet"""
     try:
         data = request.json
         text = data.get('text', '')
         target_language = data.get('target_language', 'en')
+        source_language = data.get('source_language', 'de')
         
         if not text:
             return jsonify({'error': 'No text provided'}), 400
@@ -55,21 +56,9 @@ def extract_ner():
             'es': 'Spanish'
         }
         target_lang_name = language_map.get(target_language, 'English')
-        
-        # Get source language from frontend (if provided)
-        source_language = data.get('source_language', 'de')
         source_lang_name = language_map.get(source_language, 'German')
         
-        # Build prompt - multilingual base + German-specific hints
-        base_prompt = f'Extract named entities from this {source_lang_name} text and provide translations to {target_lang_name}. Return ONLY a JSON array with NO additional text, in this exact format: [{{"text": "entity name", "type": "PERSON", "translation": "{target_lang_name} translation"}}]. Valid types are: PERSON, ORGANIZATION, LOCATION. For each entity, provide the appropriate translation or transliteration in {target_lang_name}.'
-        
-        # Add German-specific context when source is German
-        if source_language == 'de':
-            base_prompt += ' IMPORTANT: In German, ALL nouns are capitalized. Extract ONLY proper nouns (specific people, places, organizations like Österreich, Europa, USA, Angela Merkel, Europäische Union). Do NOT extract common nouns like Jahr, Zeit, Welt, Licht, Wahrheit, ich, wir, ein.'
-        
-        base_prompt += f' Text: "{text}"'
-        
-        # Call Claude API - HYBRID PROMPT
+        # Call Claude API - SONNET 3.5 (smarter model)
         response = requests.post(
             'https://api.anthropic.com/v1/messages',
             headers={
@@ -78,14 +67,31 @@ def extract_ner():
                 'anthropic-version': '2023-06-01'
             },
             json={
-                'model': 'claude-3-haiku-20240307',
-                'max_tokens': 1024,
+                'model': 'claude-3-5-sonnet-20241022',
+                'max_tokens': 2048,
                 'messages': [{
                     'role': 'user',
-                    'content': base_prompt
+                    'content': f'''You are a named entity recognition expert. Extract ONLY proper nouns from this {source_lang_name} text.
+
+PROPER NOUNS are names of SPECIFIC entities:
+- Countries, cities, regions: Österreich, Wien, Europa, USA
+- Organizations, institutions: Europäische Union, NATO, Bundestag
+- People: Angela Merkel, Van der Bellen
+- Geographical features with names: Bodensee, Alpen
+
+COMMON NOUNS are generic words (do NOT extract):
+- Generic concepts: Jahr, Zeit, Welt, Krieg, Frieden, Wahrheit, Licht
+- Regular nouns: Allianzen, Drohnen, Herkunft, Staatsgrenze
+- Pronouns/articles: ich, wir, der, die, das, ein
+
+Critical: Distinguish meaning, not just capitalization. "Europa" (the continent) is a proper noun. "Welt" (world in general) is common.
+
+Return ONLY a JSON array with translations to {target_lang_name}: [{{"text": "entity", "type": "PERSON|ORGANIZATION|LOCATION", "translation": "{target_lang_name}"}}]
+
+Text: "{text}"'''
                 }]
             },
-            timeout=10
+            timeout=15
         )
         
         if response.status_code != 200:
@@ -106,100 +112,8 @@ def extract_ner():
         
         entities = json.loads(json_match.group(0))
         
-        # AGGRESSIVE FILTERING: Only keep entities that are likely proper nouns
-        
-        filtered_entities = []
-        
-        # Whitelist of known proper nouns (countries, organizations, etc)
-        known_entities = {
-            # Countries (German names)
-            'österreich', 'deutschland', 'frankreich', 'italien', 'spanien', 'europa',
-            'usa', 'china', 'russland', 'großbritannien', 'schweiz', 'polen',
-            # Cities
-            'wien', 'berlin', 'paris', 'london', 'rom', 'madrid', 'brüssel',
-            # Organizations
-            'europäische union', 'nato', 'un', 'eu', 'bundestag',
-            # Regions
-            'osten', 'westen', 'alpen', 'bayern', 'osten europas',
-            # Lakes
-            'bodensee', 'neusiedlersee', 'genfer see'
-        }
-        
-        # Blacklist of common German words
-        blacklist = {
-            'jahr', 'jahre', 'jahren', 'zeit', 'zeiten', 'tag', 'tage', 'tagen',
-            'welt', 'licht', 'wahrheit', 'krieg', 'frieden', 'leben', 'tod',
-            'ich', 'du', 'er', 'sie', 'es', 'wir', 'ihr', 'ein', 'eine', 'der', 'die', 'das',
-            'und', 'oder', 'aber', 'den', 'dem', 'des', 'heute', 'morgen', 'gestern'
-        }
-        
-        # Common phrase patterns to reject
-        reject_patterns = [
-            'an einem tag', 'wie heute', 'wie gestern', 'wie morgen',
-            'unserer', 'unser', 'meine', 'mein', 'dein', 'deine'
-        ]
-        
-        for entity in entities:
-            entity_text = entity.get('text', '').strip()
-            entity_lower = entity_text.lower()
-            
-            # Rule 0: ALWAYS keep if in whitelist (even if it matches other rules)
-            if entity_lower in known_entities:
-                filtered_entities.append(entity)
-                print(f"Kept (whitelist): {entity_text}", flush=True)
-                continue
-            
-            # Rule 1: Skip if in blacklist
-            if entity_lower in blacklist:
-                print(f"Filtered (blacklist): {entity_text}", flush=True)
-                continue
-            
-            # Rule 2: Skip if contains reject patterns
-            should_reject = False
-            for pattern in reject_patterns:
-                if pattern in entity_lower:
-                    print(f"Filtered (phrase pattern): {entity_text}", flush=True)
-                    should_reject = True
-                    break
-            if should_reject:
-                continue
-            
-            # Rule 3: Keep if multi-word AND both words are capitalized (likely proper noun)
-            if ' ' in entity_text:
-                words = entity_text.split()
-                if len(words) >= 2:
-                    # Check if words look like proper nouns (capitalized, not articles)
-                    proper_looking = [w for w in words if w[0].isupper() and w.lower() not in {'der', 'die', 'das', 'den', 'dem', 'des', 'ein', 'eine', 'und', 'oder'}]
-                    if len(proper_looking) >= 2:
-                        filtered_entities.append(entity)
-                        print(f"Kept (multi-word proper): {entity_text}", flush=True)
-                        continue
-            
-            # Rule 4: Keep if ends in -see or -berg (lakes/mountains)
-            if entity_lower.endswith('see') or entity_lower.endswith('berg'):
-                filtered_entities.append(entity)
-                print(f"Kept (geographical): {entity_text}", flush=True)
-                continue
-            
-            # Rule 5: Skip single words under 4 chars
-            if ' ' not in entity_text and len(entity_text) < 4:
-                print(f"Filtered (too short): {entity_text}", flush=True)
-                continue
-            
-            # Rule 6: If single word, only keep if it looks very proper-noun-like
-            if ' ' not in entity_text:
-                # Must be capitalized and longish
-                if entity_text[0].isupper() and len(entity_text) >= 5:
-                    filtered_entities.append(entity)
-                    print(f"Kept (single proper): {entity_text}", flush=True)
-                    continue
-            
-            # Default: skip uncertain ones
-            print(f"Filtered (uncertain): {entity_text}", flush=True)
-        
-        print(f"Final: {len(filtered_entities)} entities after filtering (from {len(entities)})", flush=True)
-        print(f"Kept entities: {[e['text'] for e in filtered_entities]}", flush=True)
-        return jsonify({'entities': filtered_entities})
+        print(f"Sonnet extracted {len(entities)} entities: {[e['text'] for e in entities]}", flush=True)
+        return jsonify({'entities': entities})
         
     except Exception as e:
         print(f"NER error: {e}", flush=True)
@@ -208,7 +122,7 @@ def extract_ner():
         return jsonify({'error': str(e)}), 500
 
 # ===================================
-# WEBSOCKET CODE
+# WEBSOCKET CODE (unchanged)
 # ===================================
 @sock.route('/ws')
 def websocket_endpoint(ws):
@@ -216,21 +130,16 @@ def websocket_endpoint(ws):
     print("Client connected", flush=True)
     
     try:
-        # Get configuration
         config_msg = ws.receive()
         config = json.loads(config_msg)
         language = config.get('language', 'de')
         
         print(f"Language: {language}", flush=True)
-        
-        # Send ready signal
         ws.send(json.dumps({'status': 'ready'}))
         
-        # Create queue for audio data
         audio_queue = queue.Queue(maxsize=100)
         stop_flag = threading.Event()
         
-        # Thread to receive audio from browser
         def receive_audio():
             while not stop_flag.is_set():
                 try:
@@ -249,7 +158,6 @@ def websocket_endpoint(ws):
                 except:
                     continue
         
-        # Thread to forward to Deepgram and receive transcriptions
         def process_deepgram():
             import websockets
             import asyncio
@@ -331,7 +239,6 @@ def websocket_endpoint(ws):
             
             asyncio.run(stream())
         
-        # Start threads
         audio_thread = threading.Thread(target=receive_audio, daemon=True)
         deepgram_thread = threading.Thread(target=process_deepgram, daemon=True)
         
@@ -351,7 +258,7 @@ def websocket_endpoint(ws):
 
 if __name__ == '__main__':
     print("=" * 60)
-    print("CAI DEEPGRAM BACKEND")
+    print("CAI DEEPGRAM BACKEND - SONNET 3.5")
     print("=" * 60)
     
     if DEEPGRAM_API_KEY:
@@ -368,6 +275,5 @@ if __name__ == '__main__':
     
     port = int(os.environ.get('PORT', 5000))
     print(f"Starting server on port {port}")
-    print("WebSocket endpoint: /ws")
-    print("NER endpoint: /ner")
+    print("Using Claude Sonnet 3.5 for better German NER")
     app.run(host='0.0.0.0', port=port)
