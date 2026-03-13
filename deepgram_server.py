@@ -116,6 +116,71 @@ Text: "{text}"'''
         return jsonify({'error': str(e)}), 500
 
 # ===================================
+# TRANSLATION ENDPOINT
+# ===================================
+@app.route('/translate', methods=['POST'])
+def translate_text():
+    """Translate text using Claude API"""
+    try:
+        data = request.json
+        text = data.get('text', '')
+        target_language = data.get('target_language', 'en')
+        
+        if not text:
+            return jsonify({'error': 'No text provided'}), 400
+        
+        if not CLAUDE_API_KEY:
+            return jsonify({'error': 'Claude API key not configured'}), 500
+        
+        # Language name mapping
+        language_map = {
+            'de': 'German',
+            'en': 'English',
+            'it': 'Italian',
+            'ro': 'Romanian',
+            'sl': 'Slovenian',
+            'fr': 'French',
+            'es': 'Spanish',
+            'fi': 'Finnish'
+        }
+        target_lang_name = language_map.get(target_language, 'English')
+        
+        # Call Claude API for translation
+        response = requests.post(
+            'https://api.anthropic.com/v1/messages',
+            headers={
+                'Content-Type': 'application/json',
+                'x-api-key': CLAUDE_API_KEY,
+                'anthropic-version': '2023-06-01'
+            },
+            json={
+                'model': 'claude-sonnet-4-5-20250929',
+                'max_tokens': 512,
+                'messages': [{
+                    'role': 'user',
+                    'content': f'Translate this to {target_lang_name}. Return ONLY the translation, nothing else: "{text}"'
+                }]
+            },
+            timeout=10
+        )
+        
+        if response.status_code != 200:
+            print(f"Claude API error: {response.status_code}", flush=True)
+            return jsonify({'error': f'Claude API error: {response.status_code}'}), response.status_code
+        
+        claude_data = response.json()
+        translation = claude_data['content'][0]['text'].strip()
+        
+        print(f"Translated '{text}' to {target_lang_name}: '{translation}'", flush=True)
+        return jsonify({'translation': translation})
+        
+    except Exception as e:
+        print(f"Translation error: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+# ===================================
 # WEBSOCKET CODE (unchanged)
 # ===================================
 @sock.route('/ws')
